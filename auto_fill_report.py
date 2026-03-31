@@ -1,0 +1,614 @@
+import openpyxl
+import xlrd
+import xlwt
+from xlutils.copy import copy
+import random
+import os
+import configparser
+import tkinter as tk
+from tkinter import filedialog
+
+def read_config():
+    """读取配置文件"""
+    config = configparser.ConfigParser()
+    config_file = 'config.ini'
+    
+    # 如果配置文件不存在，创建默认配置
+    if not os.path.exists(config_file):
+        config['PackageColumns'] = {'names': '包号,件号,Roll No,Package No,卷号,编号'}
+        with open(config_file, 'w', encoding='utf-8') as f:
+            config.write(f)
+    
+    # 读取配置，指定utf-8编码
+    config.read(config_file, encoding='utf-8')
+    package_names = config['PackageColumns']['names'].split(',')
+    return package_names
+
+def read_adw70_data(file_path):
+    """读取Excel文件中的数据，按sheet分组，支持.xls和.xlsx格式，智能识别列标题"""
+    import os
+    sheet_data = {}
+    
+    # 读取配置文件中的包号标识符
+    package_names = read_config()
+    
+    # 根据文件扩展名选择合适的库
+    ext = os.path.splitext(file_path)[1].lower()
+    
+    if ext == '.xlsx':
+        # 使用openpyxl读取.xlsx文件
+        wb = openpyxl.load_workbook(file_path)
+        
+        for sheet_name in wb.sheetnames:
+            ws = wb[sheet_name]
+            data = []
+            
+            # 尝试识别表头行
+            header_row = None
+            header_row_idx = -1
+            for row_idx, row in enumerate(ws.iter_rows(min_row=1, max_row=10, values_only=True)):
+                if any(cell and any(pkg_name in str(cell) for pkg_name in package_names) for cell in row):
+                    header_row = row
+                    header_row_idx = row_idx + 1  # 转换为Excel行号（从1开始）
+                    break
+            
+            if header_row:
+                # 识别包号/件号列和数量列
+                package_columns = []
+                quantity_columns = []
+                
+                for i, cell in enumerate(header_row):
+                    if cell and any(pkg_name in str(cell) for pkg_name in package_names):
+                        package_columns.append(i)
+                    elif cell and '数量' in str(cell):
+                        quantity_columns.append(i)
+                
+                print(f"在{sheet_name}中识别到包号/件号列: {package_columns}")
+                print(f"在{sheet_name}中识别到数量列: {quantity_columns}")
+                
+                # 读取数据，先竖着读每一列的包号/件号
+                start_row = header_row_idx + 1
+                max_row = ws.max_row
+                
+                # 按列处理
+                for pkg_col in package_columns:
+                    # 查找对应的数量列
+                    quantity_col = None
+                    for q_col in quantity_columns:
+                        if q_col > pkg_col:
+                            quantity_col = q_col
+                            break
+                    
+                    if quantity_col:
+                        # 处理该列的所有行
+                        for row in ws.iter_rows(min_row=start_row, max_row=max_row, values_only=True):
+                            if pkg_col < len(row) and row[pkg_col] is not None:
+                                try:
+                                    # 处理件号格式，移除#号
+                                    pkg_value = str(row[pkg_col])
+                                    pkg_value = pkg_value.replace('#', '').strip()
+                                    package_num = int(pkg_value)
+                                    
+                                    # 处理数量值
+                                    if quantity_col < len(row):
+                                        qty_value = row[quantity_col]
+                                        if qty_value not in (None, ''):
+                                            quantity = float(qty_value)
+                                            data.append((package_num, quantity))
+                                except Exception as e:
+                                    # 跳过无法处理的行
+                                    pass
+            else:
+                # 如果没有识别到表头，使用默认列
+                print(f"在{sheet_name}中未识别到表头，使用默认列")
+                for row in ws.iter_rows(min_row=4, values_only=True):
+                    if row[0] is not None:
+                        try:
+                            # 处理件号格式，移除#号
+                            pkg_value = str(row[0])
+                            pkg_value = pkg_value.replace('#', '').strip()
+                            package_num = int(pkg_value)
+                            quantity = float(row[2])
+                            data.append((package_num, quantity))
+                        except Exception as e:
+                            # 跳过无法处理的行
+                            pass
+                    # 检查其他包号列
+                    if row[3] is not None:
+                        try:
+                            # 处理件号格式，移除#号
+                            pkg_value = str(row[3])
+                            pkg_value = pkg_value.replace('#', '').strip()
+                            package_num = int(pkg_value)
+                            quantity = float(row[5])
+                            data.append((package_num, quantity))
+                        except Exception as e:
+                            # 跳过无法处理的行
+                            pass
+                    if row[6] is not None:
+                        try:
+                            # 处理件号格式，移除#号
+                            pkg_value = str(row[6])
+                            pkg_value = pkg_value.replace('#', '').strip()
+                            package_num = int(pkg_value)
+                            quantity = float(row[8])
+                            data.append((package_num, quantity))
+                        except Exception as e:
+                            # 跳过无法处理的行
+                            pass
+            
+            sheet_data[sheet_name] = data
+        
+        wb.close()
+        
+    elif ext == '.xls':
+        # 使用xlrd读取.xls文件
+        wb = xlrd.open_workbook(file_path)
+        
+        for sheet_name in wb.sheet_names():
+            ws = wb.sheet_by_name(sheet_name)
+            data = []
+            
+            # 尝试识别表头行
+            header_row = None
+            header_row_idx = -1
+            for row_idx in range(min(10, ws.nrows)):
+                row = ws.row_values(row_idx)
+                if any(cell and any(pkg_name in str(cell) for pkg_name in package_names) for cell in row):
+                    header_row = row
+                    header_row_idx = row_idx
+                    break
+            
+            if header_row:
+                # 识别包号/件号列和数量列
+                package_columns = []
+                quantity_columns = []
+                
+                for i, cell in enumerate(header_row):
+                    if cell and any(pkg_name in str(cell) for pkg_name in package_names):
+                        package_columns.append(i)
+                    elif cell and '数量' in str(cell):
+                        quantity_columns.append(i)
+                
+                print(f"在{sheet_name}中识别到包号/件号列: {package_columns}")
+                print(f"在{sheet_name}中识别到数量列: {quantity_columns}")
+                
+                # 读取数据，先竖着读每一列的包号/件号
+                start_row = header_row_idx + 1
+                max_row = ws.nrows
+                
+                # 按列处理
+                for pkg_col in package_columns:
+                    # 查找对应的数量列
+                    quantity_col = None
+                    for q_col in quantity_columns:
+                        if q_col > pkg_col:
+                            quantity_col = q_col
+                            break
+                    
+                    if quantity_col:
+                        # 处理该列的所有行
+                        for row_idx in range(start_row, max_row):
+                            row = ws.row_values(row_idx)
+                            if pkg_col < len(row) and row[pkg_col] not in (None, ''):
+                                try:
+                                    # 处理件号格式，移除#号
+                                    pkg_value = str(row[pkg_col])
+                                    pkg_value = pkg_value.replace('#', '').strip()
+                                    package_num = int(pkg_value)
+                                    
+                                    # 处理数量值
+                                    if quantity_col < len(row):
+                                        qty_value = row[quantity_col]
+                                        if qty_value not in (None, ''):
+                                            quantity = float(qty_value)
+                                            data.append((package_num, quantity))
+                                except Exception as e:
+                                    # 跳过无法处理的行
+                                    pass
+            else:
+                # 如果没有识别到表头，使用默认列
+                print(f"在{sheet_name}中未识别到表头，使用默认列")
+                for row_idx in range(3, ws.nrows):  # 3是第4行的索引
+                    row = ws.row_values(row_idx)
+                    if row[0] not in (None, ''):
+                        try:
+                            # 处理件号格式，移除#号
+                            pkg_value = str(row[0])
+                            pkg_value = pkg_value.replace('#', '').strip()
+                            package_num = int(pkg_value)
+                            quantity = float(row[2])
+                            data.append((package_num, quantity))
+                        except Exception as e:
+                            # 跳过无法处理的行
+                            pass
+                    # 检查其他包号列
+                    if row[3] not in (None, ''):
+                        try:
+                            # 处理件号格式，移除#号
+                            pkg_value = str(row[3])
+                            pkg_value = pkg_value.replace('#', '').strip()
+                            package_num = int(pkg_value)
+                            quantity = float(row[5])
+                            data.append((package_num, quantity))
+                        except Exception as e:
+                            # 跳过无法处理的行
+                            pass
+                    if row[6] not in (None, ''):
+                        try:
+                            # 处理件号格式，移除#号
+                            pkg_value = str(row[6])
+                            pkg_value = pkg_value.replace('#', '').strip()
+                            package_num = int(pkg_value)
+                            quantity = float(row[8])
+                            data.append((package_num, quantity))
+                        except Exception as e:
+                            # 跳过无法处理的行
+                            pass
+            
+            sheet_data[sheet_name] = data
+        
+        # 检查xlrd的Book对象是否有close方法
+        if hasattr(wb, 'close'):
+            wb.close()
+    else:
+        print(f"不支持的文件格式: {ext}")
+    
+    return sheet_data
+
+def generate_random_score():
+    """生成随机分数，5-14分"""
+    return random.randint(5, 14)
+
+def calculate_total_score(scores):
+    """计算总分数"""
+    return sum(scores)
+
+def fill_report(source_file, min_score=5, max_score=14):
+    """根据源文件数据生成只包含吊码长、实际码长和计分的Excel文件，每个sheet生成一个文件"""
+    try:
+        print("开始处理...")
+        # 读取ADW70数据，按sheet分组
+        sheet_data = read_adw70_data(source_file)
+        print(f"读取到 {len(sheet_data)} 个sheet")
+        
+        # 定义计分项目
+        score_items = [
+            '横档',
+            '色点',
+            '断经',
+            '断纬',
+            '纱节',
+            '破洞',
+            '色档',
+            '色花',
+            '筘路',
+            '露白',
+            '污渍',
+            '油污',
+            '搭色',
+            '刀口伤',
+            '擦伤',
+            '接匹',
+            '浆斑',
+            '粗纱',
+            '钩丝',
+            '死皱',
+            '隐档',
+            '手感',
+            '纬斜',
+            '边中色差',
+            '头尾色差',
+            '其他'
+        ]
+        
+        # 为每个sheet生成一个Excel文件
+        for sheet_name, adw70_data in sheet_data.items():
+            print(f"\n处理sheet: {sheet_name}")
+            print(f"读取到 {len(adw70_data)} 条数据")
+            
+            # 检查数据格式
+            if adw70_data:
+                print(f"第一条数据: {adw70_data[0]}")
+                print(f"数据类型: package_num={type(adw70_data[0][0])}, quantity={type(adw70_data[0][1])}")
+            
+            # 创建新的工作簿
+            print("创建新工作簿...")
+            new_workbook = xlwt.Workbook()
+            new_worksheet = new_workbook.add_sheet('数据')
+            print("新工作簿创建成功")
+            
+            # 创建居中样式
+            center_style = xlwt.XFStyle()
+            alignment = xlwt.Alignment()
+            alignment.horz = xlwt.Alignment.HORZ_CENTER  # 水平居中
+            alignment.vert = xlwt.Alignment.VERT_CENTER  # 垂直居中
+            center_style.alignment = alignment
+            
+            # 填写卷号和吊码长、实际码长
+            roll_data = []
+            
+            print("填写卷号数据...")
+            for i, (package_num, quantity) in enumerate(adw70_data):
+                # 计算实际码长（吊码长基础上随机增加0.1-0.5）
+                actual_length = quantity + round(random.uniform(0.1, 0.5), 1)
+                
+                # 存储卷号数据，直接使用包号作为卷号
+                roll_data.append((package_num, quantity, actual_length))
+                print(f"第 {package_num} 卷: 吊码长={quantity}, 实际码长={actual_length}")
+            
+            # 计算总卷数
+            total_rolls = len(roll_data)
+            print(f"总卷数: {total_rolls}")
+            
+            # 每5卷一组
+            groups = (total_rolls + 4) // 5
+            print(f"分组数: {groups}")
+            
+            # 填写数据
+            for group in range(groups):
+                # 计算起始卷号和结束卷号
+                start_roll = group * 5
+                end_roll = min((group + 1) * 5, total_rolls)
+                
+                # 计算行偏移
+                row_offset = group * (len(score_items) + 8)  # 每组之间空两行，增加了门幅一行
+                
+                # 填写标题
+                new_worksheet.write(row_offset, 0, '卷号')
+                new_worksheet.write(row_offset + 1, 0, '吊码长')
+                new_worksheet.write(row_offset + 2, 0, '实际码长')
+                new_worksheet.write(row_offset + 3, 0, '门幅')
+                new_worksheet.write(row_offset + 4, 0, '计分')
+                
+                # 填写计分列标题（1-4）
+                for i in range(end_roll - start_roll):
+                    new_worksheet.write(row_offset + 4, 1 + i * 4, 1)
+                    new_worksheet.write(row_offset + 4, 2 + i * 4, 2)
+                    new_worksheet.write(row_offset + 4, 3 + i * 4, 3)
+                    new_worksheet.write(row_offset + 4, 4 + i * 4, 4)
+                
+                # 填写卷号数据
+                for i in range(start_roll, end_roll):
+                    package_num, quantity, actual_length = roll_data[i]
+                    group_idx = i - start_roll
+                    
+                    # 生成随机门幅（142-142.5），保留一位小数
+                    width = round(random.uniform(142, 142.5), 1)
+                    
+                    # 合并单元格：卷号、吊码长、实际码长、门幅对应的列
+                    # 合并卷号单元格（4列合并成一个）
+                    new_worksheet.write_merge(row_offset, row_offset, 1 + group_idx * 4, 4 + group_idx * 4, f"{package_num}#", style=center_style)
+                    # 合并吊码长单元格（4列合并成一个）
+                    new_worksheet.write_merge(row_offset + 1, row_offset + 1, 1 + group_idx * 4, 4 + group_idx * 4, quantity, style=center_style)
+                    # 合并实际码长单元格（4列合并成一个）
+                    new_worksheet.write_merge(row_offset + 2, row_offset + 2, 1 + group_idx * 4, 4 + group_idx * 4, actual_length, style=center_style)
+                    # 合并门幅单元格（4列合并成一个）
+                    new_worksheet.write_merge(row_offset + 3, row_offset + 3, 1 + group_idx * 4, 4 + group_idx * 4, width, style=center_style)
+            
+            # 填写计分
+            # 从第5行开始是计分相关行
+            print("填写计分数据...")
+            
+            # 为每个卷单独计算分数
+            roll_scores = []
+            
+            # 每5卷一组处理
+            for group in range(groups):
+                # 计算起始卷号和结束卷号
+                start_roll = group * 5
+                end_roll = min((group + 1) * 5, total_rolls)
+                
+                # 计算行偏移
+                row_offset = group * (len(score_items) + 8)  # 每组之间空两行，增加了门幅一行
+                
+                # 先填写计分项目名称
+                for row_idx, item in enumerate(score_items, start=row_offset + 5):
+                    new_worksheet.write(row_idx, 0, item)
+                
+                # 处理该组的卷
+                for i in range(start_roll, end_roll):
+                    package_num, _, _ = roll_data[i]
+                    group_idx = i - start_roll
+                    
+                    # 确定每卷的目标分数（用户指定范围）
+                    target_score = random.randint(min_score, max_score)
+                    remaining_score = target_score
+                    
+                    # 存储已填写的问题索引和位置
+                    filled_positions = set()
+                    
+                    # 随机填写分数，直到没有剩余分数
+                    while remaining_score > 0:
+                        # 随机选择一个问题和列位置
+                        available_questions = list(range(len(score_items)))
+                        available_columns = list(range(4))  # 4列
+                        
+                        # 生成所有可能的位置组合
+                        possible_positions = [(q, c) for q in available_questions for c in available_columns if (q, c) not in filled_positions]
+                        
+                        if not possible_positions:
+                            break
+                        
+                        # 随机选择一个位置
+                        item_idx, col_offset = random.choice(possible_positions)
+                        filled_positions.add((item_idx, col_offset))
+                        row_idx = row_offset + 5 + item_idx
+                        
+                        # 尝试填写分数，在1-3之间随机选择
+                        score = random.randint(1, 3)
+                        # 计算该位置的分数值：score * 列分数（列标题）
+                        col_score = col_offset + 1  # 列标题是1-4
+                        score_value = score * col_score
+                        
+                        if score_value > remaining_score:
+                            # 如果超过剩余分数，尝试更小的分数
+                            for s in range(score - 1, 0, -1):
+                                score_value = s * col_score
+                                if score_value <= remaining_score:
+                                    score = s
+                                    break
+                            else:
+                                # 如果所有分数都超过，跳过这个位置
+                                continue
+                        
+                        # 填写计分
+                        new_worksheet.write(row_idx, 1 + group_idx * 4 + col_offset, score)
+                        # 减去已使用的分数
+                        remaining_score -= score_value
+                    
+                    # 确保分数正好用完，如果还有剩余分数，尝试填补
+                    if remaining_score > 0:
+                        # 重新生成可能的位置
+                        possible_positions = [(q, c) for q in range(len(score_items)) for c in range(4) if (q, c) not in filled_positions]
+                        
+                        for q, c in possible_positions:
+                            if remaining_score <= 0:
+                                break
+                            
+                            # 尝试填写1-3之间的随机数
+                            max_score = min(3, remaining_score)
+                            if max_score < 1:
+                                continue
+                            
+                            score = random.randint(1, max_score)
+                            col_score = c + 1  # 列标题是1-4
+                            score_value = score * col_score
+                            
+                            if remaining_score >= score_value:
+                                new_worksheet.write(row_offset + 5 + q, 1 + group_idx * 4 + c, score)
+                                remaining_score -= score_value
+                        
+                        # 如果还有剩余分数，调整目标分数
+                        if remaining_score > 0:
+                            # 重新计算目标分数，确保至少5分
+                            target_score = max(5, target_score - remaining_score)
+                            remaining_score = 0
+                    
+                    # 计算实际总分数
+                    current_score = target_score - remaining_score
+                    
+                    # 确保分数在用户指定范围内
+                    if current_score < min_score:
+                        # 计算需要添加的分数
+                        needed_score = min_score - current_score
+                        current_score = min_score
+                        # 尝试添加分数直到达到5分
+                        possible_positions = [(q, c) for q in range(len(score_items)) for c in range(4) if (q, c) not in filled_positions]
+                        
+                        for q, c in possible_positions:
+                            if needed_score <= 0:
+                                break
+                            # 尝试填写1-3之间的随机数
+                            max_score = min(3, needed_score)
+                            if max_score < 1:
+                                continue
+                            
+                            score = random.randint(1, max_score)
+                            col_score = c + 1  # 列标题是1-4
+                            score_value = score * col_score
+                            
+                            if needed_score >= score_value:
+                                new_worksheet.write(row_offset + 5 + q, 1 + group_idx * 4 + c, score)
+                                needed_score -= score_value
+                    
+                    roll_scores.append(current_score)
+                    print(f"第 {package_num} 卷扣分: {current_score}")
+                
+                # 填写该组的总扣分
+                print("填写总扣分...")
+                new_worksheet.write(row_offset + len(score_items) + 5, 0, '总扣分')
+                for i in range(start_roll, end_roll):
+                    package_num = roll_data[i][0]
+                    group_idx = i - start_roll
+                    # 使用正确的索引访问roll_scores
+                    score_idx = i
+                    if score_idx < len(roll_scores):
+                        # 合并总扣分单元格（4列合并成一个）
+                        new_worksheet.write_merge(row_offset + len(score_items) + 5, row_offset + len(score_items) + 5, 1 + group_idx * 4, 4 + group_idx * 4, roll_scores[score_idx], style=center_style)
+                    else:
+                        # 如果索引超出范围，使用默认值
+                        new_worksheet.write_merge(row_offset + len(score_items) + 5, row_offset + len(score_items) + 5, 1 + group_idx * 4, 4 + group_idx * 4, 5, style=center_style)
+            print("总扣分填写完成")
+            
+            # 另存为新文件，使用sheet名字作为文件名
+            output_file = f"{sheet_name}_报告.xls"
+            print(f"保存文件到: {output_file}")
+            try:
+                new_workbook.save(output_file)
+                print(f"数据生成完成，已保存到 {output_file}")
+            except Exception as e:
+                print(f"保存文件时出错: {str(e)}, output_file={output_file}")
+                return False
+        
+        return True
+    except Exception as e:
+        print(f"错误: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+def select_file(title, filetypes):
+    """打开文件选择对话框"""
+    root = tk.Tk()
+    root.withdraw()  # 隐藏主窗口
+    file_path = filedialog.askopenfilename(title=title, filetypes=filetypes)
+    root.destroy()
+    return file_path
+
+def get_score_range():
+    """获取用户输入的分数范围，如果用户取消则使用默认值"""
+    root = tk.Tk()
+    root.withdraw()  # 隐藏主窗口
+    
+    # 创建输入对话框
+    from tkinter.simpledialog import askinteger
+    
+    min_score = askinteger("分数范围", "请输入最低分数:", minvalue=1, maxvalue=20, initialvalue=5)
+    if min_score is None:
+        root.destroy()
+        return 5, 14  # 使用默认值
+    
+    max_score = askinteger("分数范围", "请输入最高分数:", minvalue=min_score, maxvalue=50, initialvalue=14)
+    if max_score is None:
+        root.destroy()
+        return 5, 14  # 使用默认值
+    
+    root.destroy()
+    return min_score, max_score
+
+def main():
+    print("检验报告自动填写工具")
+    print("=" * 50)
+    print("Author: XHT")
+    print("Version: 1.0.0")
+    print("Date: 2026-03-31")
+    print("=" * 50)
+    
+    # 选择码单文件
+    print("请选择码单文件...")
+    source_file = select_file("选择码单文件", [("Excel文件", "*.xlsx;*.xls")])
+    if not source_file:
+        print("错误: 未选择码单文件")
+        return
+    print(f"选择的码单文件: {source_file}")
+    
+    # 获取分数范围
+    print("请设置分数范围...")
+    min_score, max_score = get_score_range()
+    print(f"设置的分数范围: {min_score}-{max_score}")
+    
+    # 检查文件是否存在
+    if not os.path.exists(source_file):
+        print(f"错误: 源文件 {source_file} 不存在")
+        return
+    
+    # 执行自动填写
+    success = fill_report(source_file, min_score, max_score)
+    if success:
+        print("操作成功完成")
+    else:
+        print("操作失败")
+
+if __name__ == "__main__":
+    main()
