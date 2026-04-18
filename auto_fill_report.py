@@ -15,7 +15,10 @@ def read_config():
     
     # 如果配置文件不存在，创建默认配置
     if not os.path.exists(config_file):
-        config['PackageColumns'] = {'names': '包号,件号,Roll No,Package No,卷号,编号'}
+        config['PackageColumns'] = {
+            'names': '包号,件号,Roll No,Package No,卷号,编号',
+            'quantity_names': '数量,件数,码数'
+        }
         config['FormatOptions'] = {
             'add_prefixes': 'false',
             'include_actual_length': 'true',
@@ -30,13 +33,14 @@ def read_config():
     # 读取配置，指定utf-8编码
     config.read(config_file, encoding='utf-8')
     package_names = config['PackageColumns']['names'].split(',')
+    quantity_names = config['PackageColumns'].get('quantity_names', '数量,件数,码数').split(',')
     add_prefixes = config.getboolean('FormatOptions', 'add_prefixes', fallback=False)
     include_actual_length = config.getboolean('FormatOptions', 'include_actual_length', fallback=True)
     min_score = config.getint('FormatOptions', 'min_score', fallback=5)
     max_score = config.getint('FormatOptions', 'max_score', fallback=14)
     score_items_count = config.getint('FormatOptions', 'score_items_count', fallback=28)
     empty_lines = config.getint('FormatOptions', 'empty_lines_between_total_and_other', fallback=1)
-    return package_names, add_prefixes, include_actual_length, min_score, max_score, score_items_count, empty_lines
+    return package_names, quantity_names, add_prefixes, include_actual_length, min_score, max_score, score_items_count, empty_lines
 
 def read_adw70_data(file_path):
     """读取Excel文件中的数据，按sheet分组，支持.xls和.xlsx格式，智能识别列标题"""
@@ -44,7 +48,7 @@ def read_adw70_data(file_path):
     sheet_data = {}
     
     # 读取配置文件中的包号标识符
-    package_names, _, _, _, _, _, _ = read_config()
+    package_names, quantity_names, _, _, _, _, _, _ = read_config()
     
     # 根据文件扩展名选择合适的库
     ext = os.path.splitext(file_path)[1].lower()
@@ -76,7 +80,7 @@ def read_adw70_data(file_path):
                 for i, cell in enumerate(header_row):
                     if cell and any(pkg_name in str(cell) for pkg_name in package_names):
                         package_columns.append(i)
-                    elif cell and '数量' in str(cell):
+                    elif cell and any(qty_name in str(cell) for qty_name in quantity_names):
                         quantity_columns.append(i)
                     elif cell and ('缸号' in str(cell) or 'lot' in str(cell).lower() or 'batch' in str(cell).lower()):
                         batch_columns.append(i)
@@ -209,7 +213,7 @@ def read_adw70_data(file_path):
                 for i, cell in enumerate(header_row):
                     if cell and any(pkg_name in str(cell) for pkg_name in package_names):
                         package_columns.append(i)
-                    elif cell and '数量' in str(cell):
+                    elif cell and any(qty_name in str(cell) for qty_name in quantity_names):
                         quantity_columns.append(i)
                     elif cell and ('缸号' in str(cell) or 'lot' in str(cell).lower() or 'batch' in str(cell).lower()):
                         batch_columns.append(i)
@@ -335,7 +339,7 @@ def fill_report(source_file):
     try:
         print("开始处理...")
         # 读取配置文件
-        _, add_prefixes, include_actual_length, min_score, max_score, score_items_count, empty_lines = read_config()
+        _, _, add_prefixes, include_actual_length, min_score, max_score, score_items_count, empty_lines = read_config()
         # 读取ADW70数据，按sheet分组
         sheet_data = read_adw70_data(source_file)
         print(f"读取到 {len(sheet_data)} 个sheet")
@@ -732,6 +736,15 @@ def select_file(title, filetypes):
     root = tk.Tk()
     root.withdraw()  # 隐藏主窗口
     file_path = filedialog.askopenfilename(title=title, filetypes=filetypes)
+    
+    # 检查是否选择了.xls文件
+    if file_path and file_path.lower().endswith('.xls'):
+        # 弹出提示对话框
+        from tkinter.messagebox import showinfo
+        showinfo("提示", "建议将.xls文件另存为.xlsx格式以获得更好的兼容性和性能。")
+        root.destroy()
+        return ""  # 返回空字符串，停止执行
+    
     root.destroy()
     return file_path
 
